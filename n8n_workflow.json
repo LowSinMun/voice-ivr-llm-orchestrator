@@ -1,0 +1,314 @@
+{
+  "name": "ABC Overseas Activation IVR",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ABC-ivr-overseas",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "bd517895-3c84-4ded-a22e-7cc10b522ac3",
+      "name": "Voice Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        -512,
+        -64
+      ],
+      "typeVersion": 2.1,
+      "webhookId": "0fd131d4-832e-4934-ba25-c5edd8c5e6c5",
+      "notes": "语音入口：接收客户语音转换后的文本"
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "chatModel": "gpt-4o-mini",
+        "prompt": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are an AI data extraction assistant for ABC Bank's IVR system. Your ONLY task is to extract two specific pieces of information from the user's speech transcript: 1. \"NRIC\": The 12-digit Malaysian Identity Card number. 2. \"Credit_Card_Last_4\": The last 4 digits of the user's credit card.  CRITICAL RULES: - You must output in STRICT, valid JSON object format. - DO NOT wrap the output in markdown (e.g., no ```json). DO NOT output any conversational text. - Output exactly this structure:  {   \"NRIC\": \"value\",    \"Credit_Card_Last_4\": \"value\" } - If a value is missing or not mentioned, output the JSON null type (not the string \"null\"). - Clean the data: Remove any spaces or hyphens from the NRIC (e.g., \"990101-14-1234\" must become \"990101141234\")."
+            },
+            {
+              "content": "=={{ Object.values($json.body.message.toolCalls[0].function)[1].customer_speech }}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "03e1a0e1-e4fd-4ae8-96dd-5808ca42b86e",
+      "name": "LLM - 意图与实体抽取",
+      "type": "n8n-nodes-base.openAi",
+      "position": [
+        -288,
+        -64
+      ],
+      "typeVersion": 1.1,
+      "credentials": {
+        "openAiApi": {
+          "id": "HyW8ouCVmeOyWpiD",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ngrok/api/...",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"session_id\": \"{{ $('Voice Trigger').item.json.body.session_id }}\",\n  \"nric\": \"{{ $json.nric }}\",\n  \"last_4_cc\": \"{{ $json.last_4_cc }}\"\n}",
+        "options": {}
+      },
+      "id": "6b31577d-6b78-4977-86f7-2a7e7039d13f",
+      "name": "API - 核心验证与状态检查",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        -64
+      ],
+      "typeVersion": 4.4,
+      "notes": "向 Python 虚拟库发送验证，重试计数和拦截都在这里完成"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "123b4b9d-0e1f-4d98-9107-f1cd772b8a35",
+              "leftValue": "= {{ $json.status }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b9d269c2-06cc-4c78-ba48-bdbcbaa13f00",
+      "name": "IF - 验证通过且卡片Active?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        384,
+        -64
+      ],
+      "typeVersion": 2.3
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ngrok/api/...",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nric",
+              "value": "=Your NRIC is {{ $('Code in JavaScript').item.json.nric }} with last 4 digits credit card {{ $('Code in JavaScript').item.json.last_4_cc }} is successfully retrieved from our server."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "80e44643-d764-4e68-8f9f-6b49e18c58c7",
+      "name": "API - 触发 CRM SR 创建",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        608,
+        -160
+      ],
+      "typeVersion": 4.4
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "chatModel": "gpt-4o-mini",
+        "prompt": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "=You are an AI customer service agent for ABC Bank.  Context: The customer has just successfully activated their credit card for overseas transactions.\n\nYour Task: \n1. Confirm the successful activation politely. \n2. Smoothly transition into a soft upsell for the ABC \"Easy Payment Plan (EPP)\" installment plan. Position it as a helpful tool to manage their upcoming travel expenses. \n3. Keep the tone warm, professional, and conversational (suitable for Text-to-Speech). \n4. Keep it concise, under 3 sentences.  \n\nCRITICAL RULES: \n- Focus EXCLUSIVELY on the \"Easy Payment Plan (EPP)\" installment plan.  \n- DO NOT, under any circumstances, promote, suggest, or mention applying for a new credit card. \n- Output ONLY the exact script to be spoken. Do not include markdown, emojis, or descriptions like [Pause] or \"Agent:\".\n- NEVER mention the customer's IC number or credit \n  card number in your response, not even partially."
+            },
+            {
+              "content": "=Customer Name: {{ $('API - 核心验证与状态检查').item.json.customer_name }}\nCustomer NRIC (masked): {{ '*'.repeat(6) + $('Code in JavaScript').item.json.nric.slice(-6) }}\nPlease generate the closing script."
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "id": "bf8b0213-9a21-4489-97df-98b7a2311794",
+      "name": "LLM - 生成结束语与 Easy Payment Plan (EPP) Upsell",
+      "type": "n8n-nodes-base.openAi",
+      "position": [
+        832,
+        -160
+      ],
+      "typeVersion": 1.1,
+      "credentials": {
+        "openAiApi": {
+          "id": "HyW8ouCVmeOyWpiD",
+          "name": "n8n free OpenAI API credits"
+        }
+      },
+      "notes": "定制化 Upsell 话术：主推 Easy Payment Plan (EPP) 账单分期"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sessionId = $('Voice Trigger').first().json.body.session_id;\n\nlet rawText = $input.first().json.message.content;\nrawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();\nconst extractedData = JSON.parse(rawText);\n\n// 如果大模型没提取到，强制转化为 null 传给后端\nreturn {\n  session_id: sessionId,\n  nric: extractedData.NRIC || null,\n  last_4_cc: extractedData.Credit_Card_Last_4 || null\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -64
+      ],
+      "id": "21c811f8-623c-47cb-aac3-1d5f04f18ec7",
+      "name": "Code in JavaScript",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "=={{\n  {\n    \"results\": [\n      {\n        \"toolCallId\": $('Voice Trigger').item.json.body.message.toolCalls[0].id,\n        \"result\": {\n          \"status\": $json.status,\n          \"message\": $json.message\n        }\n      }\n    ]\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        592,
+        32
+      ],
+      "id": "e81af032-3578-45ff-a4bb-c6dec1319b38",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"results\": [\n    {\n      \"toolCallId\": \"{{ $('Voice Trigger').item.json.body.message.toolCalls[0].id }}\",\n      \"result\": \"{{ $json.message.content }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1040,
+        -160
+      ],
+      "id": "144eee54-b96a-41fd-92aa-44c5cf4ff66b",
+      "name": "Respond to Webhook1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Voice Trigger": {
+      "main": [
+        [
+          {
+            "node": "LLM - 意图与实体抽取",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - 意图与实体抽取": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - 核心验证与状态检查": {
+      "main": [
+        [
+          {
+            "node": "IF - 验证通过且卡片Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - 验证通过且卡片Active?": {
+      "main": [
+        [
+          {
+            "node": "API - 触发 CRM SR 创建",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API - 触发 CRM SR 创建": {
+      "main": [
+        [
+          {
+            "node": "LLM - 生成结束语与 Easy Payment Plan (EPP) Upsell",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "API - 核心验证与状态检查",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM - 生成结束语与 Easy Payment Plan (EPP) Upsell": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "bb3c12ab-3945-44e5-8a32-21412d4c9085",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bc24f0fd2fba474cbc08c0e5690a6a96bb19230efda45f02f3c04b5f3d08d2c3"
+  },
+  "id": "lZgoOF9cJYEXT0z4",
+  "tags": []
+}
